@@ -1,0 +1,155 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=22mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Path=.cache/latex-ja/,BoldFont=NotoSerifCJKJP-Regular.otf,BoldFeatures={FakeBold=2}]{NotoSerifCJKJP-Regular.otf}
+\setsansfont[Path=.cache/latex-ja/,BoldFont=NotoSerifCJKJP-Regular.otf,BoldFeatures={FakeBold=2}]{NotoSerifCJKJP-Regular.otf}
+\XeTeXlinebreaklocale "ja"
+\XeTeXlinebreakskip = 0pt plus 1pt
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{2em}
+\titleformat{\section}{\normalfont\normalsize\bfseries}{}{0pt}{}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\R}{\mathbb{R}}
+\DeclareMathOperator{\Dir}{Dirichlet}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\hypersetup{pdftitle={点配置の推定方法},pdfauthor={}}
+
+\begin{document}
+\textbf{点配置の推定方法}
+
+本手法は、複数人の点アノテーションから、領域ごとの点の組合せと、回答者ごとの点数の答え方を推定する。点配置は点数と座標を含む一つの候補として扱い、点を一個ずつ独立に選ばない。入力に使うのはアノテーションの座標と各回答者に表示された範囲であり、正解ラベルや画像の輝度は使わない。
+
+\section*{回答の選択と点配置の候補}
+
+点の座標を元画像上にそろえ、近くに集まる回答を局所的な解析領域に分ける。まず点群を空間的に分割し、近接点の長い連なりが画像全体につながるのを防ぐ。各分割内では、近い点と同時に回答された点を結び、できた成分を余白付きの矩形で囲む。重なる矩形は統合する。この領域は計算の単位であり、細胞などの輪郭を示すものではない。各領域について、一人の回答者から一つの表示範囲を採用する。領域を最も広く含む表示範囲を選び、同率なら領域と表示端の距離で決める。重複する表示を独立した回答として数えないためである。点を打たなかった回答も残し、表示されていない範囲は証拠に含めない。
+
+領域$r$で採用された回答者$j$の点集合を$Y_{rj}$、元の表示範囲を$V_{rj}$、回答者の集合を$J_r$とし、$Y_r=\{Y_{rj}:j\in J_r\}$と書く。候補$\{S_{rk}\}_{k=1}^{K_r}$には、空の点配置、観測された互いに異なる点配置、全回答点の平均位置に置く1点の配置、全回答点から求める2点の配置を含める。2点の初期位置は最も遠い点の組とし、近い中心への割当てと中心位置の更新を繰り返す。同一の候補はまとめるが、回答者ごとの元の回答は残す。点を打った順序は使わず、同じ位置への複数回のクリックはその個数を残す。解析領域と候補は推定中に変えない。
+
+未知の点配置を$T_r=k$、その点数を$N_{rk}=|S_{rk}|$とする。候補が多い点数だけを有利にしないため、候補の事前確率を
+\begin{equation}
+ a_{rk}=\Prob(T_r=k)=\frac{1}{|\mathcal N_r|K_{r,N_{rk}}},
+ \qquad \mathcal N_r=\{N_{rk}\}_k,\qquad
+ K_{rn}=\#\{k:N_{rk}=n\}
+ \label{eq:prior-config}
+\end{equation}
+と置く。候補に含まれる各点数へ同じ合計確率を割り当て、その点数内で候補に等分する。表示が領域の一部だけを含む場合、回答との比較には表示内の候補点$S_{rjk}^{\rm vis}=S_{rk}\cap V_{rj}$のみを使い、重複点の個数も保つ。$m_{rjk}=|S_{rjk}^{\rm vis}|$、$n_{rj}=|Y_{rj}|$とする。
+
+\section*{回答の点数と位置のモデル}
+
+領域の点配置が定まれば、各回答は条件付きで独立と仮定する。回答者$j$には、行の和が1となる$3\times3$表$C_j$を割り当てる。$C_j[b,d]$は、見えている候補の点数が区分$b$に入るとき、回答の点数が区分$d$に入る確率である。区分は0点、1点、2点以上の三つで、$b(n)=\min(n,2)$と表す。表の自由な値は回答者一人につき六つで、領域をまたいで共通に使う。この表は点数の答え方を表し、位置の正確さを回答者別に表すものではない。候補$k$の下での回答の尤度は
+\begin{equation}
+ L_{rjk}(C_j)
+ =C_j[b(m_{rjk}),b(n_{rj})],h_{m_{rjk}}(n_{rj}),
+ f_{m_{rjk},n_{rj}}(Y_{rj}\mid S_{rjk}^{\rm vis},V_{rj})
+ \label{eq:likelihood}
+\end{equation}
+とする。$h_m$は「2点以上」の確率を実際の点数に分ける固定の分布である。
+\begin{equation}
+ h_m(n)=
+ \begin{cases}
+  1,&n=0,1,\\
+  q^{|n-u_m|}/Z_m,&n\geq2,
+ \end{cases}
+ \qquad u_m=\max(m,2),\quad
+ Z_m=\frac{1+q-q^{u_m-1}}{1-q},\quad q=0.5
+ \label{eq:tail}
+\end{equation}
+これにより$C_j[b(m),b(n)]h_m(n)$は0点以上の全点数にわたって和が1となる。3点以上の回答も捨てない。
+
+表示範囲$V$の面積を$A_V$とする。点$s$の近くに回答点$y$が置かれる密度として、$V$内で正規化したガウス分布に一様分布を少量混ぜる。
+\begin{equation}
+ g_V(y;s)=(1-\varepsilon)
+ \frac{\varphi_\sigma(y-s)}{\int_V\varphi_\sigma(u-s)\,du}
+ +\frac{\varepsilon}{A_V},\qquad y\in V
+ \label{eq:kernel}
+\end{equation}
+$V$の外では0とする。$\varphi_\sigma$は共分散$\sigma^2 I$の2次元ガウス密度で、$\sigma=4$画素、$\varepsilon=0.01$を固定する。正規化には解析領域より広い元の表示範囲を使う。
+
+見えている候補点を$S=\{s_1,\ldots,s_m\}$、回答点を$Y=(y_1,\ldots,y_n)$とする。位置の密度$f_{m,n}$では、特に次の三つの回答を区別する。$\bar s=m^{-1}\sum_a s_a$は候補点の重心である。
+\begin{align}
+ f_{m,1}(y\mid S,V)
+ &=\frac{1}{2m}\sum_{a=1}^m g_V(y;s_a)
+   +\frac12 g_V(y;\bar s), &&m>1,
+ \label{eq:merge}\\
+ f_{1,2}(y_1,y_2\mid\{s\},V)
+ &=\frac12\bigl[g_V(y_1;s)g_V(y_2;2s-y_1)
+ \notag\\[-2pt]
+ &\hspace{2.8em}+g_V(y_2;s)g_V(y_1;2s-y_2)\bigr],
+ \label{eq:split}\\
+ f_{2,2}(y_1,y_2\mid S,V)
+ &=\frac12\bigl[g_V(y_1;s_1)g_V(y_2;s_2)
+ \notag\\[-2pt]
+ &\hspace{2.8em}+g_V(y_2;s_1)g_V(y_1;s_2)\bigr].
+ \label{eq:two-two}
+\end{align}
+式\eqref{eq:merge}は複数の候補点を1点として回答する場合で、いずれかの点付近と重心付近の両方を許す。式\eqref{eq:split}は1点を2点に分けて回答する場合で、二つ目の点は$s$を中心とした一つ目の点の反対側に置かれやすい。式\eqref{eq:two-two}は2点の候補に対して、それぞれの近くに1点ずつ回答する場合である。2点の回答順は平均して消す。混合の比率は固定値であり、推定しない。
+
+空の回答では$f_{m,0}=1$、候補点が見えないのに$n>0$点を回答した場合は$f_{0,n}=A_V^{-n}$とする。残りの$m>0$の場合は
+\begin{equation}
+ f_{m,n}(Y\mid S,V)=\prod_{i=1}^{n}
+       \left[\frac1m\sum_{a=1}^{m}g_V(y_i;s_a)\right]
+ \label{eq:remaining}
+\end{equation}
+を使う。いずれも点数を固定したときの正規化された位置密度であり、回答順に依存しない。追加の階乗因子は掛けない。多数の点がある場合は、全ての点の対応付けを列挙せず、各回答点を独立に生成する近似になる。
+
+\section*{点配置と回答傾向の推定}
+
+$C_j$の各行に固定の事前分布$C_j[b,:]\sim\Dir(1+\eta_{b0},1+\eta_{b1},1+\eta_{b2})$を置く。$\eta_{bd}=\lambda B_{bd}$、$\lambda=3$とし、$B$の対角成分は$0.8$、非対角成分は$0.1$とする。同じ点数区分が回答されやすいという仮定であり、正解ラベルを与えたものではない。定数項を除き、最大化する目的関数は
+\begin{equation}
+ \mathcal J(C)=\sum_r\log\!\left[
+       \sum_k a_{rk}\prod_{j\in J_r}L_{rjk}(C_j)\right]
+       +\sum_{j,b,d}\eta_{bd}\log C_j[b,d]
+ \label{eq:objective}
+\end{equation}
+である。第一項は候補配置を足し合わせた回答の対数尤度、第二項は事前分布の対数密度に相当する。解析領域と候補は観測データから先に作って固定するため、この式は画像全体の生成過程をすべて含む尤度ではない。
+
+式\eqref{eq:objective}は、候補の重みを求める段階と回答者の表を更新する段階を交互に繰り返して最大化する。表$C^{(t)}$が与えられたとき、候補$k$の重みは
+\begin{equation}
+ w_{rk}^{(t)}=\Prob(T_r=k\mid Y_r,C^{(t)})
+ =\frac{a_{rk}\prod_{j\in J_r}L_{rjk}(C_j^{(t)})}
+ {\sum_\ell a_{r\ell}\prod_{j\in J_r}L_{rj\ell}(C_j^{(t)})}
+ \label{eq:posterior}
+\end{equation}
+となる。次に、この重みを用いて各回答者の点数区分の組を数え、表の各行を更新する。
+\begin{align}
+ A_{jbd}^{(t)}&=\sum_{r:j\in J_r}\sum_k w_{rk}^{(t)}
+   \ind\{b(m_{rjk})=b\}\ind\{b(n_{rj})=d\},
+ \label{eq:expected}\\
+ C_j^{(t+1)}[b,d]&=
+ \frac{A_{jbd}^{(t)}+\eta_{bd}}
+ {\sum_{d'=0}^2 A_{jbd'}^{(t)}+\lambda}.
+ \label{eq:update}
+\end{align}
+回答者の表が候補への支持を変え、候補の重みが表の次の推定に影響する。$\eta_{bd}$は最大事後確率推定で加わる疑似カウントであり、ディリクレ分布の形状母数そのものではない。データから情報が得られない行は$B_{b,:}$に戻る。候補の重みは表から計算する値で、独立の推定変数ではない。別の回答者信頼度を出力へ重ねて掛けることもしない。
+
+計算には対数密度とlog-sum-expを用いる。表の初期値は$B$、各行が一様な表、事前分布から生成した表の三通りとする。$C$と$w$の最大変化がともに$10^{-7}$未満、かつ$|\Delta\mathcal J|<10^{-7}\max(1,|\mathcal J|)$となれば停止する。上限は2000反復である。収束した結果の中から目的関数が最大のものを選び、最終的な表で候補の重みを計算し直す。未収束の結果は採用しない。複数の初期値を用いても、局所解への依存は完全にはなくならない。
+
+\section*{新しい画像への適用と出力}
+
+新しい画像では回答者の表を固定し、式\eqref{eq:posterior}で候補の重みだけを計算する。推定時にいなかった回答者には、推定済みの表の算術平均を使う。点数の分布、平均点数、選択した点配置を次のように出す。
+\begin{align}
+ \Prob(N_r=n\mid Y)&=\sum_{k:N_{rk}=n}w_{rk},
+ &\E[N_r\mid Y]&=\sum_k w_{rk}N_{rk},
+ \label{eq:count-output}\\
+ \widehat S_r&=S_{r,k_r^*},
+ &k_r^*&=\argmax_k w_{rk}.
+ \label{eq:map-output}
+\end{align}
+選ばれるのは一つの候補に含まれる点の組合せ全体である。位置を平均的に示す量として、期待点質量
+\begin{equation}
+ M_r(dx)=\sum_k w_{rk}\sum_{s\in S_{rk}}\delta_s(dx),
+ \qquad M_r(\R^2)=\E[N_r\mid Y]
+ \label{eq:mass}
+\end{equation}
+も作る。$\delta_s$は位置$s$に置く単位質量である。表示用のマップでは、双線形の画素配分と標準偏差1.5画素の正規化ガウス平滑化を用い、質量の総量を保つ。平滑化は候補の重みを変えない。平均マップに複数の山が見えても、それら全てを同時に含む候補が支持されたとは限らない。
+
+推定結果は、作成した候補、固定した位置モデル、推定した回答者の表を前提とする。領域や候補の作り方、表の推定に伴う不確実性は出力に含めない。誰も点を打っていない領域は新たな候補にならず、候補にない点配置も復元できない。正解ラベルなしで点数の回答傾向を推定するが、回答者別の位置精度は推定しない。得られる値はモデルの仮定に依存する統計的推定値であり、それだけで生物学的な正しさを示すものではない。
+
+\end{document}

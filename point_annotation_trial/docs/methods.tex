@@ -1,0 +1,233 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=22mm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{titlesec,microtype}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{2em}
+\titleformat{\section}{\normalfont\normalsize\bfseries}{}{0pt}{}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\R}{\mathbb{R}}
+\DeclareMathOperator{\Dir}{Dirichlet}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\hypersetup{pdftitle={Methods: point-configuration inference},pdfauthor={}}
+
+\begin{document}
+\textbf{Methods: point-configuration inference}
+
+We jointly infer point configurations and annotator-specific count-error
+probabilities from crowd annotations. A point configuration is a complete
+collection of point coordinates, including their number; its points are not
+selected independently. The method uses annotation coordinates and display
+bounds, without reference labels or image intensities.
+
+\section*{Response selection and candidate point configurations}
+
+Annotations are mapped into parent-image coordinates and grouped into local
+analysis regions. Pooled points are first partitioned spatially to prevent
+long chains of nearby annotations from joining an entire image. Within each
+partition, nearby points and points reported together are connected; their
+components are enclosed in padded rectangles, and overlapping rectangles are
+merged. These regions define units of inference, not biological object masks.
+For each region and annotator, one available display is selected by greatest
+region coverage, then by greatest edge margin. This avoids counting
+overlapping displays as independent responses. Empty responses are retained;
+unavailable responses contribute no evidence.
+
+Let $Y_{rj}$ denote annotator $j$'s selected points in region $r$, $V_{rj}$ the
+original display, and $J_r$ the available annotators; write
+$Y_r=\{Y_{rj}:j\in J_r\}$. Each region has candidates
+$\{S_{rk}\}_{k=1}^{K_r}$: the empty point configuration, distinct observed
+responses, and one-center and two-center proposals from the pooled points.
+The one-center proposal is their mean. The two-center proposal alternates
+nearest-center assignment and mean updates, starting from the farthest pair.
+Identical candidates are merged, but responses from different annotators are
+retained. Point order is ignored and repeated clicks retain their multiplicity.
+Candidates and regions remain fixed during estimation.
+
+Write $T_r=k$ for the unknown candidate and $N_{rk}=|S_{rk}|$ for its count.
+To avoid favoring counts represented by many similar candidates, the prior is
+\begin{equation}
+ a_{rk}=\Prob(T_r=k)=\frac{1}{|\mathcal N_r|K_{r,N_{rk}}},
+ \qquad \mathcal N_r=\{N_{rk}\}_k,\qquad
+ K_{rn}=\#\{k:N_{rk}=n\}.
+ \label{eq:prior-config}
+\end{equation}
+Thus each represented count receives equal total prior mass. For partial
+displays, the response model uses only the visible candidate points
+$S_{rjk}^{\rm vis}=S_{rk}\cap V_{rj}$, preserving multiplicity. Define
+$m_{rjk}=|S_{rjk}^{\rm vis}|$ and $n_{rj}=|Y_{rj}|$.
+
+\section*{Model of annotation counts and positions}
+
+Responses are conditionally independent given the region's point configuration.
+Each annotator has a row-stochastic table $C_j\in(0,1)^{3\times3}$, with
+$C_j[b,d]$ the probability of reporting count bin $d$ when the visible
+underlying count is in bin $b$. The bins are $0$, $1$, and $2+$, represented by
+$b(n)=\min(n,2)$. Each table has six free parameters and is shared across
+regions. It describes count errors, not annotator-specific location precision.
+The response likelihood is
+\begin{equation}
+ L_{rjk}(C_j)
+ =C_j[b(m_{rjk}),b(n_{rj})]\,h_{m_{rjk}}(n_{rj})\,
+ f_{m_{rjk},n_{rj}}(Y_{rj}\mid S_{rjk}^{\rm vis},V_{rj}).
+ \label{eq:likelihood}
+\end{equation}
+Here $h_m$ allocates the $2+$ bin probability among exact counts:
+\begin{equation}
+ h_m(n)=
+ \begin{cases}
+  1,&n=0,1,\\
+  q^{|n-u_m|}/Z_m,&n\geq2,
+ \end{cases}
+ \qquad u_m=\max(m,2),\quad
+ Z_m=\frac{1+q-q^{u_m-1}}{1-q},\quad q=0.5.
+ \label{eq:tail}
+\end{equation}
+Consequently, $C_j[b(m),b(n)]h_m(n)$ sums to one over all nonnegative counts;
+counts above two are not discarded.
+
+For a display $V$ with area $A_V$, define a Gaussian kernel truncated and
+normalized on $V$, with a small uniform component:
+\begin{equation}
+ g_V(y;s)=(1-\varepsilon)
+ \frac{\varphi_\sigma(y-s)}{\int_V\varphi_\sigma(u-s)\,du}
+ +\frac{\varepsilon}{A_V},\qquad y\in V,
+ \label{eq:kernel}
+\end{equation}
+and zero outside $V$. Here $\varphi_\sigma$ is the bivariate Gaussian density
+with covariance $\sigma^2 I$, $\sigma=4$ pixels, and $\varepsilon=0.01$.
+These values are fixed. Normalization uses the original display, not the
+smaller analysis region.
+
+For visible candidate points $S=\{s_1,\ldots,s_m\}$ and reported points
+$Y=(y_1,\ldots,y_n)$, the spatial density $f_{m,n}$ distinguishes three
+important response patterns. With $\bar s=m^{-1}\sum_a s_a$, they are
+\begin{align}
+ f_{m,1}(y\mid S,V)
+ &=\frac{1}{2m}\sum_{a=1}^m g_V(y;s_a)
+   +\frac12 g_V(y;\bar s), &&m>1,
+ \label{eq:merge}\\
+ f_{1,2}(y_1,y_2\mid\{s\},V)
+ &=\frac12\bigl[g_V(y_1;s)g_V(y_2;2s-y_1)
+ \notag\\[-2pt]
+ &\hspace{2.8em}+g_V(y_2;s)g_V(y_1;2s-y_2)\bigr],
+ \label{eq:split}\\
+ f_{2,2}(y_1,y_2\mid S,V)
+ &=\frac12\bigl[g_V(y_1;s_1)g_V(y_2;s_2)
+ \notag\\[-2pt]
+ &\hspace{2.8em}+g_V(y_2;s_1)g_V(y_1;s_2)\bigr].
+ \label{eq:two-two}
+\end{align}
+Equation~\eqref{eq:merge} allows several points to be reported as one,
+either near a retained point or near their centroid.
+Equation~\eqref{eq:split} allows one point to be reported as two, with the
+second near the reflection of the first through $s$.
+Equation~\eqref{eq:two-two} places one response near each of two points.
+The two response orders are averaged, so click ordering has no effect.
+The mixture weights are fixed, not additional fitted parameters.
+
+For an empty response, $f_{m,0}=1$; for no visible candidate points and
+$n>0$, $f_{0,n}=A_V^{-n}$. All remaining cases with $m>0$ use
+\begin{equation}
+ f_{m,n}(Y\mid S,V)=\prod_{i=1}^{n}
+       \left[\frac1m\sum_{a=1}^{m}g_V(y_i;s_a)\right].
+ \label{eq:remaining}
+\end{equation}
+These are normalized, exchangeable coordinate densities conditional on count;
+no additional factorial is included. Larger point configurations therefore
+use an independent-draw approximation rather than all possible point matches.
+
+\section*{Maximum-a-posteriori estimation}
+
+Each row of $C_j$ has the fixed prior
+$C_j[b,:]\sim\Dir(1+\eta_{b0},1+\eta_{b1},1+\eta_{b2})$, where
+$\eta_{bd}=\lambda B_{bd}$, $\lambda=3$, and $B$ has diagonal entries $0.8$
+and off-diagonal entries $0.1$. The diagonal preference is a modeling
+assumption, not a supplied correct label. Up to a constant, the objective is
+\begin{equation}
+ \mathcal J(C)=\sum_r\log\!\left[
+       \sum_k a_{rk}\prod_{j\in J_r}L_{rjk}(C_j)\right]
+       +\sum_{j,b,d}\eta_{bd}\log C_j[b,d].
+ \label{eq:objective}
+\end{equation}
+This is the response log likelihood, marginalized over candidate point
+configurations, plus the log prior. Regions and candidates were constructed
+from the data and are conditioned on; their construction is not jointly
+modeled as part of a whole-image likelihood.
+
+We maximize Eq.~\eqref{eq:objective} by expectation--maximization.
+Given $C^{(t)}$, the E-step computes
+\begin{equation}
+ w_{rk}^{(t)}=\Prob(T_r=k\mid Y_r,C^{(t)})
+ =\frac{a_{rk}\prod_{j\in J_r}L_{rjk}(C_j^{(t)})}
+ {\sum_\ell a_{r\ell}\prod_{j\in J_r}L_{rj\ell}(C_j^{(t)})}.
+ \label{eq:posterior}
+\end{equation}
+These weights provide the expected count-bin pairs for each annotator,
+followed by an exact row-wise M-step:
+\begin{align}
+ A_{jbd}^{(t)}&=\sum_{r:j\in J_r}\sum_k w_{rk}^{(t)}
+   \ind\{b(m_{rjk})=b\}\ind\{b(n_{rj})=d\},
+ \label{eq:expected}\\
+ C_j^{(t+1)}[b,d]&=
+ \frac{A_{jbd}^{(t)}+\eta_{bd}}
+ {\sum_{d'=0}^2 A_{jbd'}^{(t)}+\lambda}.
+ \label{eq:update}
+\end{align}
+Thus annotator tables alter the evidence for candidate counts, and candidate
+probabilities update the annotator tables. The added terms $\eta_{bd}$ are MAP
+pseudocounts, not Dirichlet shape parameters. An unsupported row returns to
+$B_{b,:}$. Candidate probabilities are derived quantities, not separate fitted
+parameters; no additional annotator confidence score is applied to the output.
+
+Calculations use log densities and log-sum-exp. We fit from three starts:
+$C_j=B$, uniform rows, and rows sampled from the prior. Iteration stops when
+the maximum absolute change in both $C$ and $w$ is below $10^{-7}$ and
+$|\Delta\mathcal J|<10^{-7}\max(1,|\mathcal J|)$, with at most 2000 iterations.
+The highest-objective converged fit is retained, and its posterior is
+recomputed using the final tables. No output is accepted from an unconverged
+fit. Multiple starts reduce, but do not eliminate, sensitivity to local optima.
+
+\section*{Application and output}
+
+For new images, annotator tables are held fixed and only the candidate
+posterior in Eq.~\eqref{eq:posterior} is evaluated. An annotator absent from
+training receives the arithmetic mean of the fitted tables. The exact count
+distribution, expected count, and selected point configuration are
+\begin{align}
+ \Prob(N_r=n\mid Y)&=\sum_{k:N_{rk}=n}w_{rk},
+ &\E[N_r\mid Y]&=\sum_k w_{rk}N_{rk},
+ \label{eq:count-output}\\
+ \widehat S_r&=S_{r,k_r^*},
+ &k_r^*&=\argmax_k w_{rk}.
+ \label{eq:map-output}
+\end{align}
+The selected candidate retains its complete point combination. A spatial
+summary is the expected point-mass measure
+\begin{equation}
+ M_r(dx)=\sum_k w_{rk}\sum_{s\in S_{rk}}\delta_s(dx),
+ \qquad M_r(\R^2)=\E[N_r\mid Y],
+ \label{eq:mass}
+\end{equation}
+where $\delta_s$ is unit mass at $s$. For visualization, bilinear deposition
+and a normalized Gaussian filter with standard deviation 1.5 pixels preserve total mass;
+smoothing does not alter posterior weights. Peaks from alternative point
+configurations may coexist in this mean map without forming one jointly
+supported point configuration.
+
+Inference is conditional on the candidate set, fixed spatial model, and fitted
+annotator tables. It does not integrate uncertainty in preprocessing or table
+estimation. Entirely unannotated regions are not proposed, and point
+configurations outside the candidate set cannot be recovered. The method
+estimates count-error tendencies without reference labels, but does not learn
+annotator-specific spatial accuracy. Its statistical estimates depend on the
+stated assumptions and are not, by themselves, evidence of biological truth.
+
+\end{document}
